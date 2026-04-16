@@ -1,0 +1,74 @@
+version: '3.8'
+
+services:
+  freepbx-microservice:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: freepbx-microservice
+    ports:
+      - "3000:3000"
+    environment:
+      # FreePBX Configuration
+      FREEPBX_HOST: 192.168.1.9
+      FREEPBX_PORT: 5060
+      FREEPBX_AMI_HOST: 192.168.1.9
+      FREEPBX_AMI_PORT: 5038
+      FREEPBX_AMI_USER: admin
+      FREEPBX_AMI_PASSWORD: amiadmin
+
+      # SIP Configuration
+      SIP_DOMAIN: 192.168.1.9
+      SIP_PORT: 5060
+      SIP_EXTENSION: 101
+      SIP_PASSWORD: extension101
+
+      # Database Configuration
+      DB_SERVER: 192.168.1.33
+      DB_DATABASE: crmHuman
+      DB_USER: sa
+      DB_PASSWORD: your_password
+      DB_POOL_SIZE: 10
+
+      # Service Configuration
+      SERVICE_PORT: 3000
+      SERVICE_HOST: 0.0.0.0
+      NODE_ENV: production
+      LOG_LEVEL: info
+
+      # Storage
+      RECORDING_STORAGE_PATH: /app/recordings
+
+      # crmHuman Integration
+      CRMHUMAN_API_URL: http://192.168.1.33/api
+      CRMHUMAN_API_KEY: your_api_key
+
+    volumes:
+      - ./logs:/app/logs
+      - ./recordings:/app/recordings
+
+    restart: unless-stopped
+
+    networks:
+      - freepbx-network
+
+    # Network access to FreePBX server
+    depends_on:
+      - freepbx-server
+
+networks:
+  freepbx-network:
+    driver: bridge
+
+# Reference: FreePBX server (not managed by docker-compose, just for reference)
+# services:
+#   freepbx-server:
+#     image: freepbx
+#     container_name: freepbx
+#     hostname: pbx
+#     ports:
+#       - "80:80"
+#       - "443:443"
+#       - "5060:5060/tcp"
+#       - "5060:5060/udp"
+#       - "5038:5038/tcp"

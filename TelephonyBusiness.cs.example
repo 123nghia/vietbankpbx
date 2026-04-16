@@ -1,0 +1,266 @@
+/**
+ * crmHuman - Telephony Integration Service
+ * This file should be added to VS.Human.Business/Imp/
+ */
+
+using System;
+using System.Collections.Generic;
+using System.Linq;
+using System.Threading.Tasks;
+using System.Net.Http;
+using System.Text.Json;
+using Microsoft.Extensions.Logging;
+using Microsoft.AspNetCore.Http;
+using VS.Human.Item.Model.RequestResponse;
+
+namespace VS.Human.Business.Imp
+{
+    public interface ITelephonyBusiness : IServiceBusiness
+    {
+        Task<dynamic> GetTodayStatistics(string extension = null);
+        Task<dynamic> GetCallHistory(CallHistoryFilterRequest filter);
+        Task<dynamic> GetRecordings(RecordingFilterRequest filter);
+        Task<dynamic> DownloadRecording(string recordingId);
+        Task<dynamic> DeleteRecording(string recordingId);
+        Task<dynamic> GetSystemStatistics();
+        Task<dynamic> GetOnlineExtensions();
+    }
+
+    public class TelephonyBusiness : BaseBusiness, ITelephonyBusiness
+    {
+        private readonly HttpClient _httpClient;
+        private readonly ILogger<TelephonyBusiness> _logger;
+        private readonly string _microserviceUrl;
+
+        public TelephonyBusiness(
+            IUnitOfWork unitOfWork,
+            IHttpContextAccessor contextAccessor,
+            HttpClient httpClient,
+            ILogger<TelephonyBusiness> logger
+        ) : base(unitOfWork, contextAccessor)
+        {
+            _httpClient = httpClient;
+            _logger = logger;
+            _microserviceUrl = Environment.GetEnvironmentVariable("FREEPBX_SERVICE_URL") 
+                ?? "http://192.168.1.9:3000";
+        }
+
+        /// <summary>
+        /// Get today's call statistics
+        /// </summary>
+        public async Task<dynamic> GetTodayStatistics(string extension = null)
+        {
+            try
+            {
+                var url = $"{_microserviceUrl}/api/statistics/today";
+                if (!string.IsNullOrEmpty(extension))
+                {
+                    url += $"?extension={extension}";
+                }
+
+                var response = await _httpClient.GetAsync(url);
+                response.EnsureSuccessStatusCode();
+
+                var json = await response.Content.ReadAsStringAsync();
+                var result = JsonSerializer.Deserialize<dynamic>(json);
+
+                _logger.LogInformation($"Retrieved today statistics for extension: {extension}");
+                return result;
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError(ex, $"Failed to get today statistics for extension: {extension}");
+                throw;
+            }
+        }
+
+        /// <summary>
+        /// Get call history with filtering
+        /// </summary>
+        public async Task<dynamic> GetCallHistory(CallHistoryFilterRequest filter)
+        {
+            try
+            {
+                var queryParams = BuildQueryString(filter);
+                var url = $"{_microserviceUrl}/api/calls/history{queryParams}";
+
+                var response = await _httpClient.GetAsync(url);
+                response.EnsureSuccessStatusCode();
+
+                var json = await response.Content.ReadAsStringAsync();
+                var result = JsonSerializer.Deserialize<dynamic>(json);
+
+                _logger.LogInformation("Retrieved call history with filter");
+                return result;
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError(ex, "Failed to get call history");
+                throw;
+            }
+        }
+
+        /// <summary>
+        /// Get recordings list
+        /// </summary>
+        public async Task<dynamic> GetRecordings(RecordingFilterRequest filter)
+        {
+            try
+            {
+                var queryParams = BuildQueryString(filter);
+                var url = $"{_microserviceUrl}/api/recordings{queryParams}";
+
+                var response = await _httpClient.GetAsync(url);
+                response.EnsureSuccessStatusCode();
+
+                var json = await response.Content.ReadAsStringAsync();
+                var result = JsonSerializer.Deserialize<dynamic>(json);
+
+                _logger.LogInformation("Retrieved recordings list");
+                return result;
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError(ex, "Failed to get recordings");
+                throw;
+            }
+        }
+
+        /// <summary>
+        /// Get recording download URL
+        /// </summary>
+        public async Task<dynamic> DownloadRecording(string recordingId)
+        {
+            try
+            {
+                var url = $"{_microserviceUrl}/api/recordings/{recordingId}/download";
+                
+                _logger.LogInformation($"Recording download URL: {url}");
+                
+                return new { downloadUrl = url };
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError(ex, $"Failed to get recording download: {recordingId}");
+                throw;
+            }
+        }
+
+        /// <summary>
+        /// Delete recording
+        /// </summary>
+        public async Task<dynamic> DeleteRecording(string recordingId)
+        {
+            try
+            {
+                var url = $"{_microserviceUrl}/api/recordings/{recordingId}";
+
+                var response = await _httpClient.DeleteAsync(url);
+                response.EnsureSuccessStatusCode();
+
+                var json = await response.Content.ReadAsStringAsync();
+                var result = JsonSerializer.Deserialize<dynamic>(json);
+
+                _logger.LogInformation($"Deleted recording: {recordingId}");
+                return result;
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError(ex, $"Failed to delete recording: {recordingId}");
+                throw;
+            }
+        }
+
+        /// <summary>
+        /// Get system wide statistics
+        /// </summary>
+        public async Task<dynamic> GetSystemStatistics()
+        {
+            try
+            {
+                var url = $"{_microserviceUrl}/api/statistics/system";
+
+                var response = await _httpClient.GetAsync(url);
+                response.EnsureSuccessStatusCode();
+
+                var json = await response.Content.ReadAsStringAsync();
+                var result = JsonSerializer.Deserialize<dynamic>(json);
+
+                _logger.LogInformation("Retrieved system statistics");
+                return result;
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError(ex, "Failed to get system statistics");
+                throw;
+            }
+        }
+
+        /// <summary>
+        /// Get currently online extensions
+        /// </summary>
+        public async Task<dynamic> GetOnlineExtensions()
+        {
+            try
+            {
+                var url = $"{_microserviceUrl}/api/statistics/extensions/online";
+
+                var response = await _httpClient.GetAsync(url);
+                response.EnsureSuccessStatusCode();
+
+                var json = await response.Content.ReadAsStringAsync();
+                var result = JsonSerializer.Deserialize<dynamic>(json);
+
+                _logger.LogInformation("Retrieved online extensions");
+                return result;
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError(ex, "Failed to get online extensions");
+                throw;
+            }
+        }
+
+        private string BuildQueryString(object obj)
+        {
+            if (obj == null) return string.Empty;
+
+            var properties = obj.GetType().GetProperties();
+            var parameters = new List<string>();
+
+            foreach (var prop in properties)
+            {
+                var value = prop.GetValue(obj);
+                if (value != null)
+                {
+                    var paramName = char.ToLowerInvariant(prop.Name[0]) + prop.Name.Substring(1);
+                    parameters.Add($"{paramName}={Uri.EscapeDataString(value.ToString())}");
+                }
+            }
+
+            return parameters.Count > 0 ? "?" + string.Join("&", parameters) : string.Empty;
+        }
+    }
+
+    // Request/Response Models
+    public class CallHistoryFilterRequest
+    {
+        public string Extension { get; set; }
+        public string Direction { get; set; } // inbound, outbound, internal
+        public string Status { get; set; } // completed, missed, failed, abandoned
+        public DateTime? StartDate { get; set; }
+        public DateTime? EndDate { get; set; }
+        public int Limit { get; set; } = 100;
+        public int Offset { get; set; } = 0;
+    }
+
+    public class RecordingFilterRequest
+    {
+        public string Extension { get; set; }
+        public string Direction { get; set; }
+        public DateTime? StartDate { get; set; }
+        public DateTime? EndDate { get; set; }
+        public int Limit { get; set; } = 50;
+        public int Offset { get; set; } = 0;
+    }
+}

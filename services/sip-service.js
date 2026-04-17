@@ -18,7 +18,7 @@ class SIPService {
     this.io = io;
     logger.info('SIP Service initializing...');
 
-    // In production, use SIP.js or node-sip library
+    // In production, use a real SIP/AMI client library
     // For now, we'll create a mock implementation with AMI (Asterisk Manager Interface)
     // This will be enhanced with actual SIP client library
 

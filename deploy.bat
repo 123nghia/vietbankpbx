@@ -6,12 +6,11 @@ setlocal enabledelayedexpansion
 
 echo.
 echo ============================================================
-echo    FreePBX Microservice Deployment Script (Windows)
-echo    Target: 192.168.1.9:3000
+echo   FreePBX Microservice Deployment Script (Windows)
+echo   Target: 192.168.1.9:3000
 echo ============================================================
 echo.
 
-REM Check for Docker
 echo Checking prerequisites...
 where docker >nul 2>nul
 if %ERRORLEVEL% NEQ 0 (
@@ -20,14 +19,19 @@ if %ERRORLEVEL% NEQ 0 (
 )
 echo [OK] Docker found
 
-where docker-compose >nul 2>nul
-if %ERRORLEVEL% NEQ 0 (
-    echo [ERROR] Docker Compose is not installed
-    exit /b 1
+docker compose version >nul 2>nul
+if %ERRORLEVEL% EQU 0 (
+    set "COMPOSE_CMD=docker compose"
+) else (
+    where docker-compose >nul 2>nul
+    if %ERRORLEVEL% NEQ 0 (
+        echo [ERROR] Docker Compose is not installed
+        exit /b 1
+    )
+    set "COMPOSE_CMD=docker-compose"
 )
 echo [OK] Docker Compose found
 
-REM Check files
 echo.
 echo Checking required files...
 if not exist "server.js" (
@@ -42,6 +46,12 @@ if not exist "package.json" (
 )
 echo [OK] Found: package.json
 
+if not exist "Dockerfile" (
+    echo [ERROR] Missing: Dockerfile
+    exit /b 1
+)
+echo [OK] Found: Dockerfile
+
 if not exist "docker-compose.yml" (
     echo [ERROR] Missing: docker-compose.yml
     exit /b 1
@@ -54,61 +64,57 @@ if not exist ".env.example" (
 )
 echo [OK] Found: .env.example
 
-REM Check .env
 echo.
 if not exist ".env" (
     echo Creating .env from template...
-    copy .env.example .env
+    copy .env.example .env >nul
     echo [WARNING] Please edit .env with your FreePBX and database credentials
     echo [WARNING] Run: notepad .env
     exit /b 1
 )
 echo [OK] .env file exists
 
-REM Build Docker image
+echo.
+echo Validating compose configuration...
+%COMPOSE_CMD% config >nul
+if %ERRORLEVEL% NEQ 0 (
+    echo [ERROR] Compose configuration is invalid
+    exit /b 1
+)
+echo [OK] Compose configuration is valid
+
 echo.
 echo Building Docker image...
-docker-compose build
+%COMPOSE_CMD% build
 if %ERRORLEVEL% NEQ 0 (
     echo [ERROR] Docker build failed
     exit /b 1
 )
 echo [OK] Docker image built successfully
 
-REM Start service
 echo.
 echo Starting FreePBX Microservice...
-docker-compose up -d
+%COMPOSE_CMD% up -d
 if %ERRORLEVEL% NEQ 0 (
     echo [ERROR] Service start failed
     exit /b 1
 )
 echo [OK] Service started
 
-REM Wait for service
 echo.
 echo Waiting for service to be ready...
-timeout /t 5 /nobreak
+timeout /t 5 /nobreak >nul
 
-REM Health check
 echo.
 echo Checking service health...
-powershell -Command "try { $response = Invoke-WebRequest -Uri 'http://localhost:3000/api/health' -TimeoutSec 5 -ErrorAction SilentlyContinue; if ($response.StatusCode -eq 200) { Write-Host '[OK] Service is healthy' } else { Write-Host '[WARNING] Service may still be starting' } } catch { Write-Host '[WARNING] Service may still be starting' }"
+powershell -Command "try { $response = Invoke-WebRequest -Uri 'http://localhost:3000/api/health' -TimeoutSec 5 -ErrorAction Stop; if ($response.StatusCode -eq 200) { Write-Host '[OK] Service is healthy' } } catch { Write-Host '[WARNING] Service may still be starting. Check logs with: docker compose logs -f freepbx-microservice' }"
 
-REM Print summary
 echo.
 echo ============================================================
-echo    ✓ Deployment Successful!
+echo   Deployment completed
 echo ============================================================
-echo.
 echo Service URL:   http://192.168.1.9:3000
 echo Health Check:  http://192.168.1.9:3000/api/health
-echo Logs:          docker-compose logs -f
-echo Stop Service:  docker-compose down
-echo.
-echo Next Steps:
-echo 1. Test: curl http://192.168.1.9:3000/api/health
-echo 2. Read: QUICKSTART.md
-echo 3. Integrate: Copy TelephonyBusiness.cs to crmHuman
-echo.
+echo Logs:          docker compose logs -f
+echo Stop Service:  docker compose down
 echo ============================================================

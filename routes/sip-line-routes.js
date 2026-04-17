@@ -5,28 +5,26 @@
 
 import express from 'express';
 import { ApiResponse } from '../utils/response.js';
-import { validate, validationSchemas } from '../utils/validation.js';
 import logger from '../utils/logger.js';
 import sipLineService from '../services/sip-line-service.js';
-import { isAdmin, isAuthenticated, getUserId, adminAuthMiddleware, authMiddleware } from '../utils/permission.js';
+import { isAdmin, getUserId } from '../utils/permission.js';
 
 export default function createSIPLineRoutes(io) {
   const router = express.Router();
 
   /**
    * POST /api/sip/create
-   * Create new SIP line (extension)
+   * Register an existing PBX extension as a managed line
    * Only admin
    * 
    * Body:
    * {
    *   "extension": "102",
    *   "displayName": "Nhân Viên A",
-   *   "password": "secure_password",
-   *   "secret": "sip_secret",
-   *   "accountCode": "dept001",
-   *   "mailboxEmail": "nhan.vien.a@company.com",
-   *   "context": "from-internal",
+   *   "endpointTech": "PJSIP",
+   *   "hintContext": "ext-local",
+   *   "dialContext": "from-internal",
+   *   "note": "Line for recruiter A",
    *   "createdByUserId": "admin-id"
    * }
    */
@@ -40,26 +38,16 @@ export default function createSIPLineRoutes(io) {
         );
       }
 
-      const {
-        extension,
-        displayName,
-        password,
-        secret,
-        accountCode,
-        mailboxEmail,
-        context,
-        createdByUserId
-      } = req.body;
+      const { extension, displayName, endpointTech, hintContext, dialContext, note, createdByUserId } = req.body;
 
       // Validate required fields
-      if (!extension || !displayName || !password) {
+      if (!extension) {
         return res.status(400).json(
           ApiResponse.error(
-            'Required fields: extension, displayName, password',
+            'Required field: extension',
             [
               { field: 'extension', message: 'Extension is required' },
-              { field: 'displayName', message: 'Display name is required' },
-              { field: 'password', message: 'Password is required' }
+              { field: 'displayName', message: 'Display name is optional but recommended' }
             ]
           )
         );
@@ -67,17 +55,16 @@ export default function createSIPLineRoutes(io) {
 
       const result = await sipLineService.createSIPLine({
         extension,
-        displayName,
-        password,
-        secret,
-        accountCode,
-        mailboxEmail,
-        context,
+        displayName: displayName || extension,
+        endpointTech,
+        hintContext,
+        dialContext,
+        note,
         createdByUserId: createdByUserId || 'system'
       });
 
       res.status(201).json(
-        ApiResponse.success(result, 'SIP line created successfully')
+        ApiResponse.success(result, 'Managed SIP line registered successfully')
       );
     } catch (error) {
       logger.error('Create SIP line error', { error: error.message });
@@ -88,7 +75,7 @@ export default function createSIPLineRoutes(io) {
 
   /**
    * DELETE /api/sip/:extension
-   * Delete SIP line (soft delete)
+   * Remove managed SIP line
    * Only admin
    * 
    * Query:
@@ -111,7 +98,7 @@ export default function createSIPLineRoutes(io) {
         deletedByUserId
       );
 
-      res.json(ApiResponse.success(result, 'SIP line deleted successfully'));
+      res.json(ApiResponse.success(result, 'Managed SIP line removed successfully'));
     } catch (error) {
       logger.error('Delete SIP line error', {
         error: error.message,
@@ -124,12 +111,13 @@ export default function createSIPLineRoutes(io) {
 
   /**
    * GET /api/sip/list
-   * Get all SIP lines
+   * Get all managed SIP lines
    * 
    * Query parameters:
    * - extension: Filter by extension
    * - status: active|inactive
-   * - isActive: true|false
+   * - isAssigned: true|false
+   * - employeeId: filter by assigned employee
    * - limit: Results per page (default: 100)
    * - offset: Pagination offset (default: 0)
    */
@@ -138,7 +126,8 @@ export default function createSIPLineRoutes(io) {
       const filters = {
         extension: req.query.extension,
         status: req.query.status,
-        isActive: req.query.isActive === 'true' ? true : (req.query.isActive === 'false' ? false : undefined),
+        isAssigned: req.query.isAssigned === 'true' ? true : (req.query.isAssigned === 'false' ? false : undefined),
+        employeeId: req.query.employeeId,
         limit: parseInt(req.query.limit) || 100,
         offset: parseInt(req.query.offset) || 0
       };
@@ -156,6 +145,20 @@ export default function createSIPLineRoutes(io) {
     } catch (error) {
       logger.error('Get SIP lines error', { error: error.message });
       res.status(500).json(ApiResponse.error('Failed to fetch SIP lines'));
+    }
+  });
+
+  /**
+   * GET /api/sip/stats/overview
+   * Get managed SIP line statistics
+   */
+  router.get('/stats/overview', async (req, res) => {
+    try {
+      const stats = await sipLineService.getSIPLineStats();
+      res.json(ApiResponse.success(stats, 'SIP line statistics retrieved'));
+    } catch (error) {
+      logger.error('Get SIP stats error', { error: error.message });
+      res.status(500).json(ApiResponse.error('Failed to fetch statistics'));
     }
   });
 
@@ -179,16 +182,17 @@ export default function createSIPLineRoutes(io) {
 
   /**
    * PUT /api/sip/:extension
-   * Update SIP line
+   * Update managed SIP line
    * Only admin
    * 
    * Body:
    * {
    *   "displayName": "New Name",
-   *   "password": "new_password",
-   *   "accountCode": "new_code",
-   *   "mailboxEmail": "new@email.com",
-   *   "status": "active"
+   *   "displayName": "New Name",
+   *   "endpointTech": "PJSIP",
+   *   "dialContext": "from-internal",
+   *   "status": "active",
+   *   "metadata": { "team": "recruitment" }
    * }
    */
   router.put('/:extension', async (req, res) => {
@@ -206,7 +210,7 @@ export default function createSIPLineRoutes(io) {
         req.body
       );
 
-      res.json(ApiResponse.success(result, 'SIP line updated successfully'));
+      res.json(ApiResponse.success(result, 'Managed SIP line updated successfully'));
     } catch (error) {
       logger.error('Update SIP line error', {
         error: error.message,
@@ -214,20 +218,6 @@ export default function createSIPLineRoutes(io) {
       });
       const statusCode = error.statusCode || 500;
       res.status(statusCode).json(ApiResponse.error(error.message));
-    }
-  });
-
-  /**
-   * GET /api/sip/stats/overview
-   * Get SIP line statistics
-   */
-  router.get('/stats/overview', async (req, res) => {
-    try {
-      const stats = await sipLineService.getSIPLineStats();
-      res.json(ApiResponse.success(stats, 'SIP line statistics retrieved'));
-    } catch (error) {
-      logger.error('Get SIP stats error', { error: error.message });
-      res.status(500).json(ApiResponse.error('Failed to fetch statistics'));
     }
   });
 
@@ -247,7 +237,7 @@ export default function createSIPLineRoutes(io) {
       }
 
       const result = await sipLineService.activateSIPLine(req.params.extension);
-      res.json(ApiResponse.success(result, 'SIP line activated'));
+      res.json(ApiResponse.success(result, 'Managed SIP line activated'));
     } catch (error) {
       logger.error('Activate SIP line error', {
         error: error.message,
@@ -274,9 +264,65 @@ export default function createSIPLineRoutes(io) {
       }
 
       const result = await sipLineService.deactivateSIPLine(req.params.extension);
-      res.json(ApiResponse.success(result, 'SIP line deactivated'));
+      res.json(ApiResponse.success(result, 'Managed SIP line deactivated'));
     } catch (error) {
       logger.error('Deactivate SIP line error', {
+        error: error.message,
+        extension: req.params.extension
+      });
+      const statusCode = error.statusCode || 500;
+      res.status(statusCode).json(ApiResponse.error(error.message));
+    }
+  });
+
+  /**
+   * POST /api/sip/:extension/assign
+   * Assign managed line to an employee
+   */
+  router.post('/:extension/assign', async (req, res) => {
+    try {
+      if (!isAdmin(req)) {
+        logger.warn(`Unauthorized SIP line assignment attempt by user: ${getUserId(req)}`);
+        return res.status(403).json(
+          ApiResponse.error('Only administrators can assign SIP lines', 403)
+        );
+      }
+
+      const result = await sipLineService.assignSIPLine(req.params.extension, {
+        employeeId: req.body.employeeId,
+        employeeName: req.body.employeeName,
+        employeeCode: req.body.employeeCode,
+        assignedByUserId: getUserId(req) || 'system'
+      });
+
+      res.json(ApiResponse.success(result, 'Managed SIP line assigned successfully'));
+    } catch (error) {
+      logger.error('Assign SIP line error', {
+        error: error.message,
+        extension: req.params.extension
+      });
+      const statusCode = error.statusCode || 500;
+      res.status(statusCode).json(ApiResponse.error(error.message));
+    }
+  });
+
+  /**
+   * POST /api/sip/:extension/unassign
+   * Remove employee assignment from managed line
+   */
+  router.post('/:extension/unassign', async (req, res) => {
+    try {
+      if (!isAdmin(req)) {
+        logger.warn(`Unauthorized SIP line unassign attempt by user: ${getUserId(req)}`);
+        return res.status(403).json(
+          ApiResponse.error('Only administrators can unassign SIP lines', 403)
+        );
+      }
+
+      const result = await sipLineService.unassignSIPLine(req.params.extension);
+      res.json(ApiResponse.success(result, 'Managed SIP line unassigned successfully'));
+    } catch (error) {
+      logger.error('Unassign SIP line error', {
         error: error.message,
         extension: req.params.extension
       });

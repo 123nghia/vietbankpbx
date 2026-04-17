@@ -21,7 +21,7 @@ export const validationSchemas = {
     endDate: Joi.date().optional(),
     extension: Joi.string().optional(),
     direction: Joi.string().valid('inbound', 'outbound', 'internal').optional(),
-    status: Joi.string().valid('completed', 'missed', 'failed', 'abandoned').optional(),
+    status: Joi.string().valid('completed', 'busy', 'no_answer', 'cancelled', 'failed').optional(),
     limit: Joi.number().default(100).max(1000),
     offset: Joi.number().default(0)
   }),

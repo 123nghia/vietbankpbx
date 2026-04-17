@@ -1,6 +1,11 @@
 /**
  * Quick Start Guide - FreePBX Microservice
+ * Deprecated for the current PBX-host adapter flow.
+ * Use PBX_INTEGRATION.md instead.
  */
+
+> Deprecated: this file still contains the older SQL Server based flow.
+> Use [PBX_INTEGRATION.md](./PBX_INTEGRATION.md) for deployment on `192.168.1.9`.
 
 # Quick Start Guide
 

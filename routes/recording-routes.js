@@ -73,12 +73,14 @@ router.get('/:recordingId/download', async (req, res) => {
     const recording = await recordingService.getRecording(req.params.recordingId);
     const stream = recordingService.getRecordingStream(req.params.recordingId, recording);
 
-    res.setHeader('Content-Type', `audio/${recording.FileFormat}`);
+    res.setHeader('Content-Type', `audio/${recording.fileFormat}`);
     res.setHeader(
       'Content-Disposition',
-      `attachment; filename="${recording.RecordingId}.${recording.FileFormat}"`
+      `attachment; filename="${recording.recordingId}.${recording.fileFormat}"`
     );
-    res.setHeader('Content-Length', recording.FileSize);
+    if (recording.fileSize) {
+      res.setHeader('Content-Length', recording.fileSize);
+    }
 
     stream.pipe(res);
 
@@ -112,26 +114,7 @@ router.get('/:recordingId/download', async (req, res) => {
  */
 router.post('/:recordingId/register', async (req, res) => {
   try {
-    const {
-      callId,
-      filename,
-      fromExtension,
-      toExtension,
-      toNumber,
-      direction,
-      duration
-    } = req.body;
-
-    const result = await recordingService.registerRecording(
-      req.params.recordingId,
-      callId,
-      filename,
-      fromExtension,
-      toExtension,
-      toNumber,
-      direction,
-      duration
-    );
+    const result = await recordingService.registerRecording(req.params.recordingId, req.body);
 
     res.json(ApiResponse.success(result, 'Recording registered successfully'));
   } catch (error) {
@@ -139,7 +122,8 @@ router.post('/:recordingId/register', async (req, res) => {
       error: error.message,
       recordingId: req.params.recordingId
     });
-    res.status(500).json(ApiResponse.error('Failed to register recording'));
+    const statusCode = error.statusCode || 500;
+    res.status(statusCode).json(ApiResponse.error(error.message || 'Failed to register recording'));
   }
 });
 

@@ -3,8 +3,12 @@
  */
 
 import express from 'express';
+import fs from 'fs';
 import { ApiResponse } from '../utils/response.js';
 import logger from '../utils/logger.js';
+import sipService from '../services/sip-service.js';
+import pbxDataService from '../services/pbx-data-service.js';
+import pbxConfigService from '../services/pbx-config-service.js';
 
 const router = express.Router();
 
@@ -18,7 +22,7 @@ router.get('/', (req, res) => {
       status: 'healthy',
       uptime: process.uptime(),
       timestamp: new Date().toISOString(),
-      service: 'FreePBX Microservice',
+      service: 'FreePBX PBX Adapter',
       version: '1.0.0'
     }, 'Service is healthy'));
   } catch (error) {
@@ -33,9 +37,12 @@ router.get('/', (req, res) => {
  */
 router.get('/detailed', async (req, res) => {
   try {
+    const recordingRoot = pbxConfigService.getRecordingRoot();
     const checks = {
-      database: 'connecting...',
-      sip: 'connecting...',
+      cdrDatabase: pbxDataService.pool ? 'connected' : 'disconnected',
+      ami: sipService.isConnected() ? 'connected' : 'disconnected',
+      recordingRoot,
+      recordingRootAccessible: fs.existsSync(recordingRoot),
       timestamp: new Date().toISOString()
     };
 

@@ -1,5 +1,8 @@
 # README.md - FreePBX Microservice
 
+> Deployment note: the active integration model is now PBX-host adapter on `192.168.1.9`.
+> Use [PBX_INTEGRATION.md](./PBX_INTEGRATION.md) for the current FreePBX/AMI/CDR flow.
+
 <div align="center">
 
 # 📞 FreePBX Microservice for crmHuman

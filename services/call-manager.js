@@ -1,10 +1,12 @@
 /**
- * Call Manager Service - Manages call lifecycle and orchestration
+ * Call Manager Service
+ * Orchestrates CRM-facing call APIs on top of PBX services.
  */
 
 import logger from '../utils/logger.js';
 import sipService from './sip-service.js';
-import databaseService from './database-service.js';
+import pbxDataService from './pbx-data-service.js';
+import sipLineService from './sip-line-service.js';
 
 class CallManager {
   constructor() {
@@ -16,140 +18,69 @@ class CallManager {
     logger.info('Call Manager initialized');
   }
 
-  /**
-   * Initiate auto-dial
-   */
   async autoDial(fromExtension, toNumber, metadata = {}) {
-    try {
-      const callId = await sipService.makeCall(fromExtension, toNumber, metadata);
-      
-      logger.info('Auto-dial initiated', {
-        callId,
-        fromExtension,
-        toNumber
-      });
+    const line = await sipLineService.getSIPLineByExtension(fromExtension);
 
-      return {
-        callId,
-        status: 'initiated',
-        fromExtension,
-        toNumber
+    if (line.status !== 'active') {
+      throw {
+        statusCode: 409,
+        message: `Managed line ${fromExtension} is not active`
       };
-    } catch (error) {
-      logger.error('Auto-dial failed', {
-        error: error.message,
-        fromExtension,
-        toNumber
-      });
-      throw error;
     }
+
+    if (
+      metadata.employeeId &&
+      line.assignment?.employeeId &&
+      String(metadata.employeeId) !== String(line.assignment.employeeId)
+    ) {
+      throw {
+        statusCode: 409,
+        message: `Managed line ${fromExtension} is assigned to employee ${line.assignment.employeeId}`
+      };
+    }
+
+    const mergedMetadata = {
+      ...metadata,
+      employeeId: metadata.employeeId || line.assignment?.employeeId || null,
+      employeeName: metadata.employeeName || line.assignment?.employeeName || null,
+      employeeCode: metadata.employeeCode || line.assignment?.employeeCode || null
+    };
+
+    const callId = await sipService.makeCall(fromExtension, toNumber, mergedMetadata);
+
+    logger.info('Auto-dial initiated', {
+      callId,
+      fromExtension,
+      toNumber,
+      employeeId: mergedMetadata.employeeId || null
+    });
+
+    return {
+      callId,
+      status: 'initiated',
+      fromExtension,
+      toNumber,
+      employeeId: mergedMetadata.employeeId || null
+    };
   }
 
-  /**
-   * Get call history with filtering
-   */
   async getCallHistory(filters = {}) {
     try {
-      let query = `
-        SELECT 
-          CallId, FromExtension, ToExtension, ToNumber, Direction, Status,
-          StartTime, EndTime, Duration, WaitTime, RecordingId, Metadata
-        FROM CallLogs
-        WHERE 1=1
-      `;
-      
-      const params = {};
-
-      if (filters.extension) {
-        query += ` AND (FromExtension = @extension OR ToExtension = @extension)`;
-        params.extension = filters.extension;
-      }
-
-      if (filters.direction) {
-        query += ` AND Direction = @direction`;
-        params.direction = filters.direction;
-      }
-
-      if (filters.status) {
-        query += ` AND Status = @status`;
-        params.status = filters.status;
-      }
-
-      if (filters.startDate) {
-        query += ` AND StartTime >= @startDate`;
-        params.startDate = filters.startDate;
-      }
-
-      if (filters.endDate) {
-        query += ` AND StartTime <= @endDate`;
-        params.endDate = filters.endDate;
-      }
-
-      query += ` ORDER BY StartTime DESC`;
-      query += ` OFFSET @offset ROWS FETCH NEXT @limit ROWS ONLY`;
-      
-      params.offset = filters.offset || 0;
-      params.limit = filters.limit || 100;
-
-      const totalQuery = `
-        SELECT COUNT(*) as total FROM CallLogs WHERE 1=1
-        ${filters.extension ? ` AND (FromExtension = @extension OR ToExtension = @extension)` : ''}
-        ${filters.direction ? ` AND Direction = @direction` : ''}
-        ${filters.status ? ` AND Status = @status` : ''}
-        ${filters.startDate ? ` AND StartTime >= @startDate` : ''}
-        ${filters.endDate ? ` AND StartTime <= @endDate` : ''}
-      `;
-
-      const [calls, totalResult] = await Promise.all([
-        databaseService.query(query, params),
-        databaseService.query(totalQuery, params)
-      ]);
-
-      return {
-        calls,
-        total: totalResult[0]?.total || 0,
-        limit: filters.limit || 100,
-        offset: filters.offset || 0
-      };
+      return await pbxDataService.getCallHistory(filters);
     } catch (error) {
       logger.error('Failed to get call history', { error: error.message });
       throw error;
     }
   }
 
-  /**
-   * Get single call details
-   */
   async getCallDetails(callId) {
     try {
-      const result = await databaseService.query(`
-        SELECT 
-          CallId, FromExtension, ToExtension, ToNumber, Direction, Status,
-          StartTime, EndTime, Duration, WaitTime, RecordingId, Metadata
-        FROM CallLogs
-        WHERE CallId = @callId
-      `, { callId });
-
-      if (!result || result.length === 0) {
-        throw { statusCode: 404, message: 'Call not found' };
+      const activeCall = sipService.getCallSnapshot(callId);
+      if (activeCall) {
+        return activeCall;
       }
 
-      const call = result[0];
-
-      // Get associated recording if exists
-      if (call.RecordingId) {
-        const recordings = await databaseService.query(`
-          SELECT RecordingId, FilePath, FileSize, FileFormat, Duration
-          FROM Recordings
-          WHERE RecordingId = @recordingId
-        `, { recordingId: call.RecordingId });
-
-        if (recordings.length > 0) {
-          call.recording = recordings[0];
-        }
-      }
-
-      return call;
+      return await pbxDataService.getCallDetails(callId);
     } catch (error) {
       logger.error('Failed to get call details', {
         error: error.message,
@@ -159,21 +90,13 @@ class CallManager {
     }
   }
 
-  /**
-   * End call
-   */
   async endCall(callId, reason = 'normal') {
     try {
-      const call = await this.getCallDetails(callId);
-      
-      await sipService.updateCallStatus(callId, 'completed', {
-        reason,
-        duration: call.Duration
-      });
+      const result = await sipService.endCall(callId, reason);
 
-      logger.info('Call ended', { callId, reason });
+      logger.info('Call end requested', { callId, reason });
 
-      return { success: true, callId };
+      return result;
     } catch (error) {
       logger.error('Failed to end call', {
         error: error.message,
@@ -181,6 +104,14 @@ class CallManager {
       });
       throw error;
     }
+  }
+
+  getActiveCalls() {
+    return sipService.getActiveCalls();
+  }
+
+  getActiveCallsCount() {
+    return sipService.getActiveCallsCount();
   }
 }
 

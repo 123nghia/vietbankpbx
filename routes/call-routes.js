@@ -73,6 +73,7 @@ export default function createCallRoutes(io) {
         status: req.query.status,
         startDate: req.query.startDate ? new Date(req.query.startDate) : null,
         endDate: req.query.endDate ? new Date(req.query.endDate) : null,
+        includeTotal: req.query.includeTotal === 'true',
         limit: parseInt(req.query.limit) || 100,
         offset: parseInt(req.query.offset) || 0
       };

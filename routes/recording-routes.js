@@ -29,6 +29,7 @@ router.get('/', async (req, res) => {
       direction: req.query.direction,
       startDate: req.query.startDate ? new Date(req.query.startDate) : null,
       endDate: req.query.endDate ? new Date(req.query.endDate) : null,
+      includeTotal: req.query.includeTotal === 'true',
       limit: parseInt(req.query.limit) || 50,
       offset: parseInt(req.query.offset) || 0
     };

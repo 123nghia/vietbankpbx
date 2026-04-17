@@ -188,11 +188,44 @@ class PBXDataService {
     return { whereClauses, params };
   }
 
+  applyDefaultDateRange(filters = {}) {
+    if (filters.startDate || filters.endDate || filters.callId) {
+      return filters;
+    }
+
+    const lookbackDays = Number(process.env.CDR_DEFAULT_LOOKBACK_DAYS || 30);
+    if (!lookbackDays || lookbackDays <= 0) {
+      return filters;
+    }
+
+    return {
+      ...filters,
+      startDate: new Date(Date.now() - lookbackDays * 24 * 60 * 60 * 1000),
+      endDate: new Date()
+    };
+  }
+
+  async getOptionalTotalCount(filters, subquery, subqueryParams, whereClauses, outerParams, rowCount) {
+    if (filters.includeTotal !== true && filters.includeTotal !== 'true') {
+      return Number(filters.offset || 0) + rowCount;
+    }
+
+    const countSql = `
+      SELECT COUNT(*) AS total
+      FROM (${subquery}) cdr_count_view
+      WHERE ${whereClauses.join(' AND ')}
+    `;
+
+    const [countRows] = await this.pool.query(countSql, [...subqueryParams, ...outerParams]);
+    return countRows[0]?.total || 0;
+  }
+
   async getCallHistory(filters = {}) {
-    const { subquery, params: subqueryParams } = this.buildCdrSubquery(filters, false);
-    const { whereClauses, params: outerParams } = this.buildOuterFilters(filters);
-    const limit = filters.limit || 100;
-    const offset = filters.offset || 0;
+    const effectiveFilters = this.applyDefaultDateRange(filters);
+    const { subquery, params: subqueryParams } = this.buildCdrSubquery(effectiveFilters, false);
+    const { whereClauses, params: outerParams } = this.buildOuterFilters(effectiveFilters);
+    const limit = Math.min(Number(effectiveFilters.limit || 100), Number(process.env.CDR_MAX_PAGE_SIZE || 500));
+    const offset = Number(effectiveFilters.offset || 0);
 
     const sql = `
       SELECT *
@@ -202,21 +235,21 @@ class PBXDataService {
       LIMIT ? OFFSET ?
     `;
 
-    const countSql = `
-      SELECT COUNT(*) AS total
-      FROM (${subquery}) cdr_view
-      WHERE ${whereClauses.join(' AND ')}
-    `;
-
     const queryParams = [...subqueryParams, ...outerParams, limit, offset];
-    const countParams = [...subqueryParams, ...outerParams];
 
     const [rows] = await this.pool.query(sql, queryParams);
-    const [countRows] = await this.pool.query(countSql, countParams);
+    const total = await this.getOptionalTotalCount(
+      effectiveFilters,
+      subquery,
+      subqueryParams,
+      whereClauses,
+      outerParams,
+      rows.length
+    );
 
     return {
       calls: rows.map((row) => this.normalizeCallRow(row)),
-      total: countRows[0]?.total || 0,
+      total,
       limit,
       offset
     };
@@ -240,10 +273,11 @@ class PBXDataService {
   }
 
   async getRecordings(filters = {}) {
-    const { subquery, params: subqueryParams } = this.buildCdrSubquery(filters, true);
-    const { whereClauses, params: outerParams } = this.buildOuterFilters(filters);
-    const limit = filters.limit || 50;
-    const offset = filters.offset || 0;
+    const effectiveFilters = this.applyDefaultDateRange(filters);
+    const { subquery, params: subqueryParams } = this.buildCdrSubquery(effectiveFilters, true);
+    const { whereClauses, params: outerParams } = this.buildOuterFilters(effectiveFilters);
+    const limit = Math.min(Number(effectiveFilters.limit || 50), Number(process.env.CDR_MAX_PAGE_SIZE || 500));
+    const offset = Number(effectiveFilters.offset || 0);
 
     const sql = `
       SELECT *
@@ -253,23 +287,23 @@ class PBXDataService {
       LIMIT ? OFFSET ?
     `;
 
-    const countSql = `
-      SELECT COUNT(*) AS total
-      FROM (${subquery}) recording_view
-      WHERE ${whereClauses.join(' AND ')}
-    `;
-
     const queryParams = [...subqueryParams, ...outerParams, limit, offset];
-    const countParams = [...subqueryParams, ...outerParams];
 
     const [rows] = await this.pool.query(sql, queryParams);
-    const [countRows] = await this.pool.query(countSql, countParams);
+    const total = await this.getOptionalTotalCount(
+      effectiveFilters,
+      subquery,
+      subqueryParams,
+      whereClauses,
+      outerParams,
+      rows.length
+    );
 
     return {
       recordings: rows
         .map((row) => this.normalizeRecordingRow(row))
         .filter((recording) => recording !== null),
-      total: countRows[0]?.total || 0,
+      total,
       limit,
       offset
     };

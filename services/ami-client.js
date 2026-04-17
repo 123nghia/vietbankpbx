@@ -30,47 +30,86 @@ class AMIClient extends EventEmitter {
     }
 
     this.shouldReconnect = true;
-    await this.connectAndLogin();
     this.initialized = true;
+
+    try {
+      await this.connectAndLogin();
+    } catch (error) {
+      this.scheduleReconnect('initial-connect-failed');
+      throw error;
+    }
   }
 
   async connectAndLogin() {
     const amiConfig = pbxConfigService.getAmiConfig();
 
-    await new Promise((resolve, reject) => {
-      const socket = net.createConnection(
-        { host: amiConfig.host, port: amiConfig.port },
-        () => {
-          socket.removeListener('error', reject);
-          this.socket = socket;
-          this.socket.setKeepAlive(true, 10000);
-          this.socket.on('data', this.boundDataHandler);
-          this.socket.on('close', this.boundCloseHandler);
-          this.socket.on('error', this.boundErrorHandler);
-          resolve();
-        }
-      );
-
-      socket.once('error', reject);
-    });
-
-    await this.waitForBanner();
-
-    const loginResponse = await this.sendAction('Login', {
-      Username: amiConfig.username,
-      Secret: amiConfig.password,
-      Events: 'on'
-    });
-
-    if (loginResponse.Response !== 'Success') {
-      throw new Error(loginResponse.Message || 'AMI login failed');
-    }
-
-    this.connected = true;
-    logger.info('Connected to Asterisk AMI', {
+    logger.info('Connecting to Asterisk AMI', {
       host: amiConfig.host,
-      port: amiConfig.port
+      port: amiConfig.port,
+      username: amiConfig.username
     });
+
+    try {
+      await new Promise((resolve, reject) => {
+        const socket = net.createConnection(
+          { host: amiConfig.host, port: amiConfig.port },
+          () => {
+            socket.removeListener('error', reject);
+            this.socket = socket;
+            this.buffer = '';
+            this.banner = null;
+            this.socket.setKeepAlive(true, 10000);
+            this.socket.on('data', this.boundDataHandler);
+            this.socket.on('close', this.boundCloseHandler);
+            this.socket.on('error', this.boundErrorHandler);
+            resolve();
+          }
+        );
+
+        socket.once('error', reject);
+      });
+
+      await this.waitForBanner().catch((error) => {
+        if (amiConfig.requireBanner) {
+          throw error;
+        }
+
+        logger.warn('AMI banner was not received; attempting Login action anyway', {
+          error: error.message,
+          host: amiConfig.host,
+          port: amiConfig.port
+        });
+      });
+
+      const loginResponse = await this.sendAction('Login', {
+        Username: amiConfig.username,
+        Secret: amiConfig.password,
+        Events: 'on'
+      });
+
+      if (loginResponse.Response !== 'Success') {
+        throw new Error(loginResponse.Message || 'AMI login failed');
+      }
+
+      this.connected = true;
+      logger.info('Connected to Asterisk AMI', {
+        host: amiConfig.host,
+        port: amiConfig.port
+      });
+    } catch (error) {
+      this.connected = false;
+      this.banner = null;
+
+      if (this.socket) {
+        this.socket.removeListener('data', this.boundDataHandler);
+        this.socket.removeListener('close', this.boundCloseHandler);
+        this.socket.removeListener('error', this.boundErrorHandler);
+        this.socket.destroy();
+        this.socket = null;
+      }
+
+      throw error;
+    }
   }
 
   waitForBanner() {
@@ -81,8 +120,9 @@ class AMIClient extends EventEmitter {
     return new Promise((resolve, reject) => {
       const timeout = setTimeout(() => {
         this.off('banner', handleBanner);
-        reject(new Error('Timed out waiting for AMI banner'));
-      }, 5000);
+        const amiConfig = pbxConfigService.getAmiConfig();
+        reject(new Error(`Timed out waiting for AMI banner from ${amiConfig.host}:${amiConfig.port}`));
+      }, pbxConfigService.getAmiConfig().bannerTimeoutMs);
 
       const handleBanner = (banner) => {
         clearTimeout(timeout);
@@ -183,23 +223,38 @@ class AMIClient extends EventEmitter {
   handleData(chunk) {
     this.buffer += chunk.toString('utf8');
 
-    let separatorIndex = this.buffer.indexOf('\r\n\r\n');
+    let separator = this.findMessageSeparator();
 
-    while (separatorIndex >= 0) {
-      const rawMessage = this.buffer.slice(0, separatorIndex);
-      this.buffer = this.buffer.slice(separatorIndex + 4);
+    while (separator.index >= 0) {
+      const rawMessage = this.buffer.slice(0, separator.index);
+      this.buffer = this.buffer.slice(separator.index + separator.length);
 
       if (rawMessage.trim()) {
         const message = this.parseMessage(rawMessage);
         this.handleMessage(message);
       }
 
-      separatorIndex = this.buffer.indexOf('\r\n\r\n');
+      separator = this.findMessageSeparator();
     }
   }
 
+  findMessageSeparator() {
+    const crlfIndex = this.buffer.indexOf('\r\n\r\n');
+    const lfIndex = this.buffer.indexOf('\n\n');
+
+    if (crlfIndex === -1 && lfIndex === -1) {
+      return { index: -1, length: 0 };
+    }
+
+    if (crlfIndex !== -1 && (lfIndex === -1 || crlfIndex <= lfIndex)) {
+      return { index: crlfIndex, length: 4 };
+    }
+
+    return { index: lfIndex, length: 2 };
+  }
+
   parseMessage(rawMessage) {
-    const lines = rawMessage.split('\r\n');
+    const lines = rawMessage.split(/\r?\n/);
 
     if (lines.length === 1 && !lines[0].includes(':')) {
       return { Banner: lines[0] };
@@ -309,11 +364,20 @@ class AMIClient extends EventEmitter {
 
     logger.warn('AMI socket disconnected');
 
+    this.scheduleReconnect('socket-disconnected');
+  }
+
+  scheduleReconnect(reason) {
     if (!this.shouldReconnect || this.reconnectTimer) {
       return;
     }
 
     const reconnectDelayMs = pbxConfigService.getAmiConfig().reconnectDelayMs;
+    logger.warn('Scheduling AMI reconnect', {
+      reason,
+      reconnectDelayMs
+    });
+
     this.reconnectTimer = setTimeout(async () => {
       this.reconnectTimer = null;
       try {

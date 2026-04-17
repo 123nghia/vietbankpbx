@@ -52,6 +52,8 @@ class PBXConfigService {
       port: parseInt(process.env.FREEPBX_AMI_PORT || '5038', 10),
       username: process.env.FREEPBX_AMI_USER || 'admin',
       password: process.env.FREEPBX_AMI_PASSWORD || '',
+      bannerTimeoutMs: parseInt(process.env.FREEPBX_AMI_BANNER_TIMEOUT_MS || '15000', 10),
+      requireBanner: process.env.FREEPBX_AMI_REQUIRE_BANNER === 'true',
       reconnectDelayMs: parseInt(process.env.FREEPBX_AMI_RECONNECT_DELAY_MS || '5000', 10)
     };
   }

@@ -21,8 +21,6 @@ class SIPService {
   async initialize(io) {
     this.io = io;
 
-    await amiClient.initialize();
-
     if (!this.bound) {
       amiClient.on('event', (event) => this.handleAmiEvent(event));
       amiClient.on('reconnected', async () => {
@@ -36,12 +34,26 @@ class SIPService {
       this.bound = true;
     }
 
-    await this.refreshExtensionStates();
+    try {
+      await amiClient.initialize();
+      await this.refreshExtensionStates();
+    } catch (error) {
+      logger.error('AMI is not connected. Service will continue in degraded mode and retry in background.', {
+        error: error.message
+      });
+    }
 
     logger.info('SIP/AMI Service initialized');
   }
 
   async makeCall(fromExtension, toNumber, metadata = {}) {
+    if (!this.isConnected()) {
+      throw {
+        statusCode: 503,
+        message: 'Asterisk AMI is disconnected'
+      };
+    }
+
     const callId = metadata.callId || uuidv4();
     const endpointTech = metadata.endpointTech || pbxConfigService.getEndpointTechnology();
     const dialContext = metadata.context || pbxConfigService.getDialContext();
@@ -121,6 +133,13 @@ class SIPService {
   }
 
   async endCall(callId, reason = 'normal') {
+    if (!this.isConnected()) {
+      throw {
+        statusCode: 503,
+        message: 'Asterisk AMI is disconnected'
+      };
+    }
+
     const call = this.activeCalls.get(callId);
 
     if (!call) {
